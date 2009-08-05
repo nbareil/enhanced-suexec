@@ -327,7 +327,7 @@ void clean_file_descriptors(void)
         }
 
         DEBUG("Closing all file descriptors.\n");
-	for (i = STDERR_FILENO; i <  sc_open_max; i++)
+	for (i = STDERR_FILENO+1; i <  sc_open_max; i++)
 		close(i);
 }
 
@@ -347,8 +347,41 @@ void disable_coredump(void)
                 PERROR("setrlimit() failed");
 }
 
+char * extract_interpreter(char *shebang, size_t len) {
+        size_t i, start, finished = 0;
+
+        if (len <= 3) /* '#' and '!' and maybe ' ' */ 
+                ERROR("Shebang too short.\n");
+
+        if (shebang[1] != '!') {
+                ERROR("Shebang malformed.\n");
+        }
+
+        if (shebang[2] == ' ')
+                start = 3;
+        else
+                start = 2;
+
+        if (len < start)
+                ERROR("Interpreter path not present in shebang?\n");
+
+        i = start;
+        while (i < len && finished == 0) {
+                char c = shebang[i];
+
+                if (c == '\n' || c == ' ' || c == '\0')
+                        finished = i;
+
+                i++;
+        }
+        shebang[finished] = '\0';
+
+        return shebang+start;
+}
+
+
 int main(int argc, char *argv[], char *environ[]) {
-	int fdparent, fdtarget;
+	int fdparent, fdtarget, interpreter_needed;
 	char *parentdir, *filename, dotslashfilename[NAME_MAX+2];
         char *target_user, *target_group, *target_cmdline;
 	char *sep, **cleanenv;
@@ -358,6 +391,7 @@ int main(int argc, char *argv[], char *environ[]) {
 
         drop_capabilities();
         disable_coredump();
+        clean_file_descriptors();
 
         if (getuid() != CALLER_UID || getgid() != CALLER_GID) {
                 AUDIT("Runned by %d:%d instead of %d:%d, abording.\n",
@@ -399,7 +433,9 @@ int main(int argc, char *argv[], char *environ[]) {
 	/* now that we validate the parent directory, we can use it! */
 	if (fchdir(fdparent) != 0)
 		PERROR("fchdir(parentdir)");
-	close(fdparent);
+
+	if (close(fdparent) != 0)
+                PERROR("close(fdparent)");;
 
 	fdtarget = check_target_relative_file(filename, 
 					      TARGET_MIN_UID, TARGET_MIN_GID,
@@ -417,14 +453,42 @@ int main(int argc, char *argv[], char *environ[]) {
 	if (setuid(target_stat.st_uid) != 0)
 		PERROR("setgid(target.owner)");
 
-	clean_file_descriptors();
+        n = read(fdtarget, buf, sizeof buf);
+        if (n < 0)
+                PERROR("read(target) failed");
+        if (n == 0)
+                ERROR("Empty target file\n");
 
-        read(fdtarget, buf, sizeof buf);
+        if (buf[0] == '#') {
+                char devfd[BUFSIZE];
+                char *newargv[3], *interpreter;
 
-	DEBUG("execve(\"%s\")\n", filename);
-	argv[0] = filename;
-	execve(filename, argv, cleanenv);
-	PERROR("execve() failed");
+                DEBUG("shellbang's emulation\n");
+
+                interpreter = extract_interpreter(buf, n);
+                if (!interpreter || *interpreter == '\0')
+                        ERROR("Malformed interpreter's path\n");
+
+                snprintf(devfd, sizeof(devfd), "/dev/fd/%d", fdtarget);
+                devfd[sizeof(devfd)] = '\0';
+
+                newargv[0] = interpreter;
+                newargv[1] = devfd;
+                newargv[2] = NULL;
+
+                DEBUG("execve(\"%s\", [\"%s\", \"%s\"], cleanenv)\n", interpreter, newargv[0], newargv[1]);
+                execve(interpreter, newargv, cleanenv);
+
+        } else {
+                if (close(fdtarget) != 0)
+                        PERROR("close(fdtarget)");
+
+                DEBUG("execve(\"%s\")\n", filename);
+                argv[0] = filename;
+                execve(filename, argv, cleanenv);
+        }
+
+        PERROR("execve() failed");
 
 	return 1;
 }
