@@ -1,0 +1,53 @@
+
+
+  Because scripts can not be set-user-id, we must write a minimal
+  binary wrapper (in C for example, even if we could use a compiled
+  Python file in theory) which will execve() the main suexec program
+  with the following constraint:
+
+   - Parent directory of the _suexec program:
+     drwxr-x---. 2 root root 4.0K 2009-07-30 10:56 .
+
+   - _suexec program permissions:
+     -rwxr-x---. 1 root root 0 2009-07-30 10:58 _suexec
+
+* Algorithm
+     
+     1. Drop capabilities
+
+     2. parentdir,targetfile = split_path(target)
+
+     3. fdparent = open(parentdir)
+
+     4. fstat(fdparent)
+        1. Owner
+        2. Permissions
+        3. Not a Symbolic link
+
+     5. Open the target file
+
+     6. fstat()
+        2. UID > 1000
+        3. GID > 1000
+        4. Not a symbolic link
+        5. Number of hardlink ?
+        6. Shell account in /etc/shells
+
+     7. setuid(uid)
+
+     8. fchdir(fdparent)
+
+     9. fdtarget = open('targetfile')
+
+     10. Cleaning environment
+
+     11. Close all file descriptors
+
+     12. firstchar = read(fdtarget, 1)
+         If firstchar == '#'
+              interpreter = read(fdtarget, BUF_SIZE)
+              execve(interpreter, '/dev/fd/3', argv)
+         else
+             execve(targetfile)
+
+
