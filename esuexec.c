@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
+#include <stdlib.h>
 #include <sys/time.h>
 #include <sys/stat.h>
 #include <sys/prctl.h>
@@ -12,15 +13,23 @@
 #include <sys/resource.h>
 #include <sys/capability.h>
 
-#define AUDIT(x, args...) do { printf("AUDIT: " x, ##args); } while (0)
-#define DEBUG(x, args...) do { printf("DEBUG: " x, ##args); } while (0)
-#define WARNING(x, args...) do { printf("WARNING: " x, ##args); } while (0)
-#define PERROR(x) do { perror(x); _exit(1); } while (0)
-#define ERROR(x, args...) do { fprintf(stderr,"ERROR: " x, ## args); _exit(1); } while (0)
+#ifdef DEBUGP
+#  define AUDIT(x, args...) do { printf("AUDIT: " x, ##args); } while (0)
+#  define DEBUG(x, args...) do { printf("DEBUG: " x, ##args); } while (0)
+#  define WARNING(x, args...) do { printf("WARNING: " x, ##args); } while (0)
+#  define PERROR(x) do { perror(x); _exit(1); } while (0)
+#  define ERROR(x, args...) do { fprintf(stderr,"ERROR: " x, ## args); _exit(1); } while (0)
+#else
+#  define AUDIT(x, args...) do {  } while (0)
+#  define DEBUG(x, args...) do {  } while (0)
+#  define WARNING(x, args...) do { } while (0)
+#  define PERROR(x) do {  } while (0)
+#  define ERROR(x, args...) do {  } while (0)
+#endif
 
 #define PARENT_DIR_PERMS (S_IRUSR | S_IWUSR | S_IXUSR | S_IRGRP | S_IXGRP)
-#define CALLER_UID 0
-#define CALLER_GID 0
+#define CALLER_UID 33
+#define CALLER_GID 33
 
 #define BUFSIZE 1024
 
