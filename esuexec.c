@@ -64,31 +64,6 @@ size_t number_of_objects(char *tab[])
 	return i;
 }
 
-char *split_basename(char *fullpath)
-{
-	char *c = strrchr(fullpath, '/');
-	size_t len;
-
-	if (c && *c) {
-		*c = '\0';
-
-		 len = strlen(fullpath);
-		 if (!len || len > PATH_MAX)
-			 ERROR("filename incorrect: len(parentdir) = %d\n", len);
-		 
-		 len = strlen(c+1);
-		 if (!len || len > NAME_MAX)
-			 ERROR("filename incorrect: len(relative) = %d\n", len);
-
-		 return c;
-	} else {
-		ERROR("filename \"%s\" incorrect: malformed string?.\n", fullpath);
-	}
-
-	return NULL;
-}
-
-
 int check_parent_directory(char dir[], uid_t uid, gid_t gid, mode_t perms) 
 {
 	struct stat dirstat;
@@ -107,7 +82,7 @@ int check_parent_directory(char dir[], uid_t uid, gid_t gid, mode_t perms)
 		ERROR("The directory is not a directory... Hmmm... Weird.\n");
 
 	if ((dirstat.st_uid != uid) && (dirstat.st_gid != gid))
-		ERROR("The directory MUST be owned by root\n");
+		ERROR("The directory MUST be owned by %d:%d\n", uid, gid);
 
 	if ((dirstat.st_mode  & ~S_IFMT) != perms)
 		ERROR("The directory MUST be %lo (and not %lo)\n", 
@@ -391,15 +366,15 @@ char * extract_interpreter(char *shebang, size_t len) {
 
 int main(int argc, char *argv[], char *environ[]) {
 	int fdparent, fdtarget, interpreter_needed;
-	char *parentdir, *filename, dotslashfilename[NAME_MAX+2];
-        char *target_user, *target_group, *target_cmdline;
+	char parentdir[PATH_MAX], *filename, dotslashfilename[NAME_MAX+2];
+        char *target_user, *target_group, *target_filename;
 	char *sep, **cleanenv;
         char buf[BUFSIZE];
         size_t n;
 	struct stat target_stat;
 
-        drop_capabilities();
-        disable_coredump();
+        /* drop_capabilities(); */
+        /* disable_coredump(); */
         clean_file_descriptors();
 
         if (getuid() != CALLER_UID || getgid() != CALLER_GID) {
@@ -423,19 +398,15 @@ int main(int argc, char *argv[], char *environ[]) {
 
         target_user    = argv[1];
         target_group   = argv[2];
-        target_cmdline = argv[3];
+        target_filename = argv[3];
 
-	sep = split_basename(target_cmdline);
-	if (!sep)
-		return 1;
+        if (getcwd(parentdir, sizeof parentdir) == NULL)
+                PERROR("getcwd() failed");
 
-	parentdir = target_cmdline;
-	filename = sep+1;
+	DEBUG("parentdir=\"%s\" target_filename=\"%s\"\n",
+	      parentdir, target_filename);
 
-	DEBUG("parentdir=\"%s\" filename=\"%s\"\n",
-	      parentdir, filename);
-
-	fdparent = check_parent_directory(parentdir, 0, 0, PARENT_DIR_PERMS);
+	fdparent = check_parent_directory(parentdir, 0, 33, PARENT_DIR_PERMS);
 	if (fdparent < 0)
 		return 1;
 
@@ -446,7 +417,7 @@ int main(int argc, char *argv[], char *environ[]) {
 	if (close(fdparent) != 0)
                 PERROR("close(fdparent)");;
 
-	fdtarget = check_target_relative_file(filename, 
+	fdtarget = check_target_relative_file(target_filename, 
 					      TARGET_MIN_UID, TARGET_MIN_GID,
 					      TARGET_HARDLINK_PERMITTED,
 					      TARGET_SHELL_REQUIRED,
@@ -458,9 +429,9 @@ int main(int argc, char *argv[], char *environ[]) {
                 ERROR("The file is not owned by SuExecUser:SuExecGroup !\n");
 
 	if (setgid(target_stat.st_gid) != 0)
-		PERROR("setuid(target.owner)");
-	if (setuid(target_stat.st_uid) != 0)
 		PERROR("setgid(target.owner)");
+	if (setuid(target_stat.st_uid) != 0)
+		PERROR("setuid(target.owner)");
 
         n = read(fdtarget, buf, sizeof buf);
         if (n < 0)
@@ -492,9 +463,9 @@ int main(int argc, char *argv[], char *environ[]) {
                 if (close(fdtarget) != 0)
                         PERROR("close(fdtarget)");
 
-                DEBUG("execve(\"%s\")\n", filename);
-                argv[0] = filename;
-                execve(filename, argv, cleanenv);
+                DEBUG("execve(\"%s\")\n", target_filename);
+                argv[0] = target_filename;
+                execve(target_filename, argv, cleanenv);
         }
 
         PERROR("execve() failed");
